@@ -6,7 +6,7 @@
 //! mint-on-promotion, burn-on-demotion, and a query view proving badge
 //! state always matches the last minted/burned tier.
 
-use crate::{ReputationBadge, ReputationBadgeClient, Tier};
+use crate::{Error, ReputationBadge, ReputationBadgeClient, Tier};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 struct Ctx {
@@ -84,4 +84,43 @@ fn burn_badge_without_existing_badge_panics() {
     let ctx = setup();
     let solver = Address::generate(&ctx.env);
     ctx.client().burn_badge(&solver);
+}
+
+#[test]
+fn initialize_twice_is_rejected() {
+    let ctx = setup();
+    assert_eq!(
+        ctx.client().try_initialize(&ctx.admin),
+        Err(Ok(Error::AlreadyInitialized.into()))
+    );
+}
+
+#[test]
+fn mint_and_burn_before_initialize_are_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, ReputationBadge);
+    let client = ReputationBadgeClient::new(&env, &contract_id);
+    let solver = Address::generate(&env);
+
+    assert_eq!(
+        client.try_mint_badge(&solver, &Tier::Bronze),
+        Err(Ok(Error::NotInitialized.into()))
+    );
+    assert_eq!(
+        client.try_burn_badge(&solver),
+        Err(Ok(Error::NotInitialized.into()))
+    );
+}
+
+#[test]
+fn mint_and_burn_require_admin_auth() {
+    let ctx = setup();
+    let solver = Address::generate(&ctx.env);
+    // Drop the blanket auth mock: no signature from the admin is present.
+    ctx.env.set_auths(&[]);
+
+    assert!(ctx.client().try_mint_badge(&solver, &Tier::Gold).is_err());
+    assert!(ctx.client().try_burn_badge(&solver).is_err());
+    assert_eq!(ctx.client().get_badge(&solver), None);
 }

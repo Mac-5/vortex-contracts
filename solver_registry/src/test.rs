@@ -759,6 +759,7 @@ fn lock_obligation_rejects_unregistered_solver() {
 }
 
 #[test]
+#[test]
 fn obligations_are_scoped_per_solver() {
     let ctx = setup();
     let writer = with_writer(&ctx);
@@ -766,12 +767,43 @@ fn obligations_are_scoped_per_solver() {
     let other = Address::generate(&ctx.env);
     ctx.mint(&other, FLOOR);
     c.register_solver(&other, &FLOOR);
+
+    let a = intent(&ctx.env, 1);
+    let b = intent(&ctx.env, 2);
+    c.lock_obligation(&writer, &ctx.solver, &a);
+    c.lock_obligation(&writer, &other, &b);
+
+    assert_eq!(c.get_open_obligations(&ctx.solver), 1);
+    assert_eq!(c.get_open_obligations(&other), 1);
+
+    c.release_obligation(&writer, &ctx.solver, &a);
+    assert_eq!(c.get_open_obligations(&ctx.solver), 0);
+    // Releasing one solver's obligation leaves the other's untouched.
+    assert_eq!(c.get_open_obligations(&other), 1);
+}
+
+#[test]
+fn fills_and_failures_are_counted_independently() {
+    let ctx = setup();
+    ctx.register(FLOOR);
+    let c = ctx.client();
+    c.record_failure(&ctx.admin, &ctx.solver, &next_intent(&ctx.env));
+    c.record_fill(
+        &ctx.admin,
+        &ctx.solver,
+        &next_intent(&ctx.env),
+        &(10 * USDC),
+    );
+    let rec = c.get_solver(&ctx.solver).unwrap();
+    assert_eq!(rec.fills_failed, 1);
+    assert_eq!(rec.fills_completed, 1);
+    assert_eq!(rec.total_volume, 10 * USDC);
 }
 
 // ─── Tier demotion on slash ────────────────────────────────────────────────
 
 #[test]
-fn slash_demotes_tier_and_pays_fee_recipient() {
+fn bond_at_bronze_floor_qualifies_after_clean_fill() {
     let ctx = setup();
     // Bond exactly at the Bronze floor.
     ctx.register(500 * USDC);

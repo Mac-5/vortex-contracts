@@ -630,3 +630,65 @@ fn mock_remove_proof_clears_stored_record() {
     c.mock_remove_proof(&intent_id);
     assert!(!c.has_proof(&intent_id));
 }
+
+#[test]
+fn bytes_to_hex_string_zero_pads_leading_zero_nibble() {
+    let ctx = setup();
+    let bytes = Bytes::from_slice(&ctx.env, &[0x0a, 0xff, 0x00]);
+    let hex = ProofRegistry::bytes_to_hex_string(&ctx.env, &bytes);
+    assert_eq!(hex, String::from_str(&ctx.env, "0x0aff00"));
+}
+
+#[test]
+fn receive_message_stores_negative_src_amount() {
+    let ctx = setup();
+    let c = ctx.client();
+    let emitter = emitter_addr(&ctx.env, 0x11);
+    c.set_authorized_emitter(&2, &emitter);
+
+    let intent_id = make_intent_id(&ctx.env, 23);
+    let payload = make_payload(&intent_id, 2, -500);
+    let vaa = build_vaa(&ctx.env, 2, &emitter, 9, &payload);
+    c.receive_message(&vaa);
+
+    assert_eq!(c.get_proof(&intent_id).unwrap().src_amount, -500);
+}
+
+#[cfg(feature = "testutils")]
+#[test]
+fn get_fresh_proof_boundary_is_inclusive_but_stale_one_second_later() {
+    let ctx = setup();
+    let c = ctx.client();
+    ctx.env.ledger().with_mut(|li| li.timestamp = 10_000);
+    let now = ctx.env.ledger().timestamp();
+
+    let fresh_id = make_intent_id(&ctx.env, 24);
+    c.mock_set_proof(&ProofRecord {
+        intent_id: fresh_id.clone(),
+        src_user: String::from_str(&ctx.env, "0xaa"),
+        src_chain_id: 2,
+        src_token: String::from_str(&ctx.env, "0xbb"),
+        src_amount: 1,
+        vaa_sequence: 1,
+        received_at: now - crate::PROOF_VALIDITY_WINDOW,
+    });
+    assert_eq!(
+        c.get_fresh_proof(&fresh_id).received_at,
+        now - crate::PROOF_VALIDITY_WINDOW
+    );
+
+    let stale_id = make_intent_id(&ctx.env, 25);
+    c.mock_set_proof(&ProofRecord {
+        intent_id: stale_id.clone(),
+        src_user: String::from_str(&ctx.env, "0xaa"),
+        src_chain_id: 2,
+        src_token: String::from_str(&ctx.env, "0xbb"),
+        src_amount: 1,
+        vaa_sequence: 2,
+        received_at: now - crate::PROOF_VALIDITY_WINDOW - 1,
+    });
+    assert_eq!(
+        c.try_get_fresh_proof(&stale_id),
+        Err(Ok(Error::ProofStale.into()))
+    );
+}
